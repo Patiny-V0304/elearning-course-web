@@ -1,23 +1,22 @@
 {
-  "name": "project-e-learning",
+  "name": "server",
   "version": "1.0.0",
-  "description": "none",
+  "description": "LMS Backend Server",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "prisma:generate": "npx prisma generate",
+    "prisma:push": "npx prisma db push"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/zufogocoding/elearning-course-web.git"
+  "dependencies": {
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2"
   },
-  "keywords": [
-    "web",
-    "e-learning"
-  ],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/zufogocoding/elearning-course-web/issues"
-  },
-  "homepage": "https://github.com/zufogocoding/elearning-course-web#readme"
+  "devDependencies": {
+    "prisma": "7.8.0"
+  }
 }
