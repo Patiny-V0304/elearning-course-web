@@ -28,7 +28,7 @@ Hệ thống là nền tảng học lập trình trực tuyến theo mô hình B
 
 - Đăng ký, đăng nhập, quên mật khẩu.
 - Duyệt khóa học, xem chi tiết và bài học xem trước.
-- Mua khóa học (thanh toán qua Stripe/PayPal), áp dụng mã giảm giá.
+- Mua khóa học (thanh toán qua VNPayQR / MoMo), áp dụng mã giảm giá.
 - Vào khu vực học:
   - Xem video với Signed URL bảo mật, tua video – vị trí tua được lưu liên tục (checkpoint).
   - Đọc bài text.
@@ -58,15 +58,15 @@ Hệ thống là nền tảng học lập trình trực tuyến theo mô hình B
        - `status = 'pending'`
        - `coupon_id = <id của coupon>`
        - `enrolled_at = NOW()`
-4. Backend gọi API cổng thanh toán để tạo Payment Intent, trả về `client_secret` cho frontend.
-5. Frontend mở giao diện thanh toán (Stripe Elements...).
-6. **Hoàn tất thanh toán:**
-   - Webhook từ Stripe báo `payment_intent.succeeded` → Backend:
+4. Backend gọi API VNPay hoặc MoMo để tạo yêu cầu thanh toán (tạo signature bảo mật SHA256/HMAC từ API Secret), trả về đường dẫn thanh toán (`payUrl` của MoMo hoặc `vnp_PayUrl` của VNPay) cho frontend.
+5. Frontend chuyển hướng (redirect) người dùng sang trang thanh toán của VNPay/MoMo hoặc hiển thị mã QR Code để người dùng quét thanh toán trên app ngân hàng / ví MoMo.
+6. **Hoàn tất thanh toán (IPN & Redirection):**
+   - **Xác nhận bất đồng bộ (IPN URL):** Khi thanh toán thành công, cổng thanh toán VNPay/MoMo gửi yêu cầu HTTP POST (IPN) trực tiếp đến Backend. Backend xác thực chữ ký (checksum signature) bảo mật, đối chiếu số tiền (`amount`), mã đơn hàng (`orderId`), nếu hợp lệ thì:
      - Tạo `payment_transactions` (status='completed').
      - Cập nhật `enrollments.status = 'active'`.
-   - Nếu thanh toán thất bại/hết hạn:
-     - Webhook `payment_intent.payment_failed` hoặc `canceled`.
-     - Backend đánh dấu `enrollments.status = 'expired'` và **hoàn trả lượt coupon**: giảm `used_count` của coupon đi 1.
+     - Trả về phản hồi thành công (`status: 200` hoặc response theo đặc tả cổng thanh toán) để xác nhận đã nhận IPN.
+   - **Chuyển hướng phía client (Return/Redirect URL):** Sau khi thanh toán xong, người dùng được chuyển hướng về trang Frontend kèm các tham số giao dịch. Frontend gửi request lên Backend để kiểm tra trạng thái thực tế và hiển thị màn hình chúc mừng.
+   - **Nếu giao dịch thất bại:** Nhận IPN báo thất bại hoặc hết thời gian giao dịch, Backend cập nhật `enrollments.status = 'expired'` và **hoàn trả lượt coupon**: giảm `used_count` của coupon đi 1.
 7. **Cron Job dọn dẹp:** Mỗi 5 phút, tìm các `enrollments` có `status='pending'` và `enrolled_at < NOW() - INTERVAL '15 minutes'` mà không có payment thành công → chuyển sang `expired` và hoàn lượt coupon.
 
 ### 4.3. Học tập & Theo dõi tiến độ (có Checkpoint & Chống gian lận)
@@ -113,7 +113,7 @@ Hệ thống là nền tảng học lập trình trực tuyến theo mô hình B
 
 ### 4.7. Hoàn tiền & Hủy giao dịch
 
-- **Từ Admin:** Admin chọn một giao dịch, nhấn "Hoàn tiền". Hệ thống gọi API cổng thanh toán để refund.
+- **Từ Admin:** Admin chọn một giao dịch, nhấn "Hoàn tiền". Hệ thống gọi API hoàn tiền (Refund API) tương ứng của VNPay (gửi yêu cầu hoàn tiền vnp_Api) hoặc MoMo (gửi request type refund) có kèm signature bảo mật.
   - Cập nhật `payment_transactions.status = 'refunded'`.
   - Cập nhật `enrollments.status = 'revoked'`, `revoked_at = NOW()`.
   - Nếu có certificate, đánh dấu `is_revoked = true`.
@@ -176,8 +176,9 @@ Tất cả các bảng chính đều có `deleted_at` để hỗ trợ xóa mề
 | POST | /auth/reset-password | Đặt lại mật khẩu |
 | GET | /courses | Danh sách khóa học (lọc, phân trang) |
 | GET | /courses/{slug} | Chi tiết khóa học (kèm bài học preview) |
-| POST | /enrollments | Tạo enrollment (pending) + intent thanh toán |
-| POST | /payments/webhook | Webhook từ cổng thanh toán |
+| POST | /enrollments | Tạo enrollment (pending) + tạo link thanh toán VNPay/MoMo |
+| POST/GET | /payments/vnpay-ipn | IPN Callback từ VNPay (xác thực chữ ký, cập nhật trạng thái) |
+| POST | /payments/momo-ipn | IPN Callback từ MoMo (xác thực chữ ký, cập nhật trạng thái) |
 | GET | /learning/{courseId}/structure | Lấy cây chương/bài học + trạng thái |
 | GET | /videos/{lessonId}/playback | Trả về signed URL (hoặc HLS manifest) |
 | POST | /lessons/{id}/progress | Cập nhật checkpoint (current_time) |
@@ -438,3 +439,73 @@ CREATE INDEX idx_user_quiz_attempts_user_quiz ON user_quiz_attempts(user_id, qui
 ```
 
 ---
+
+## 9. Kế Hoạch Triển Khai & Tiến Độ Dự Án (Implementation Plan & Progress)
+
+### 9.1. Bảng Tiến Độ Tổng Quan (Overview Dashboard)
+| Giai Đoạn | Mô Tả | Số Task | Hoàn Thành | Tiến Độ (%) | Trạng Thế / Ghi Chú |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Phase 1** | Khởi tạo dự án & Cơ sở dữ liệu | 4 | 4 | 100% | Hoàn thành |
+| **Phase 2** | Xác thực người dùng (Auth) & Profile | 5 | 4 | 80% | Đang thực hiện (Chưa làm Frontend) |
+| **Phase 3** | Admin: Quản lý Khóa học & Nội dung | 6 | 0 | 0% | Chưa bắt đầu |
+| **Phase 4** | Checkout, Thanh toán & Mã giảm giá | 6 | 0 | 0% | Chưa bắt đầu |
+| **Phase 5** | Tiến độ học tập & Chống gian lận tua Video | 6 | 0 | 0% | Chưa bắt đầu |
+| **Phase 6** | Làm Quiz & Tự động cấp Chứng chỉ | 5 | 0 | 0% | Chưa bắt đầu |
+| **Phase 7** | Đánh giá, Hoàn tiền & Admin Dashboard | 5 | 0 | 0% | Chưa bắt đầu |
+| **Tổng cộng**| **Toàn bộ dự án** | **37** | **8** | **21.6%** | **Đang triển khai** |
+
+---
+
+### 9.2. Chi Tiết Các Giai Đoạn & Task List
+
+#### Phase 1: Khởi Tạo Dự Án & Cơ Sở Dữ Liệu
+- [x] **TASK-1.1:** Khởi tạo cấu trúc dự án Next.js (client) và Express.js (server) bằng Docker-compose. *(Hoàn thành)*
+- [x] **TASK-1.2:** Thiết kế Schema Database chi tiết trong Prisma với PostgreSQL (Đồng bộ các thực thể: User, Course, Coupon, Quiz, Certificate...). *(Hoàn thành)*
+- [x] **TASK-1.3:** Setup kết nối cơ sở dữ liệu (`lib/prisma.js`), thiết lập các biến môi trường và chạy migration khởi tạo DB. *(Hoàn thành)*
+- [x] **TASK-1.4:** Thiết lập dịch vụ gửi Email (Nodemailer Transporter) phục vụ luồng Auth. *(Hoàn thành)*
+
+#### Phase 2: Đăng Ký, Đăng Nhập & Hồ Sơ Người Dùng (Auth & Profile)
+- [x] **TASK-2.1 [BE]:** Xây dựng JWT Authentication Middleware (Access Token ngắn hạn & Refresh Token lưu trong HTTP-Only cookie, cơ chế Rotate Token). *(Hoàn thành)*
+- [x] **TASK-2.2 [BE]:** Hoàn thành API đăng ký, đăng nhập, đăng xuất, refresh token và quên/reset mật khẩu. *(Hoàn thành)*
+- [x] **TASK-2.3 [BE]:** Xây dựng API lấy và cập nhật thông tin cá nhân (Profile, đổi mật khẩu). *(Hoàn thành)*
+- [x] **TASK-2.4 [BE]:** Xây dựng API Admin lấy danh sách người dùng và khóa/mở khóa tài khoản. *(Hoàn thành)*
+- [ ] **TASK-2.5 [FE]:** Phát triển giao diện Login, Register, Forgot Password, Reset Password và trang thông tin cá nhân Profile sử dụng CSS đẹp mắt, hiện đại. *(Chưa bắt đầu)*
+
+#### Phase 3: Quản Lý Khóa Học & Nội Dung Học Tập (Admin)
+- [ ] **TASK-3.1 [BE]:** Xây dựng API CRUD Danh mục khóa học (Categories) hỗ trợ cấu trúc cây phân cấp (parent/child). *(Chưa bắt đầu)*
+- [ ] **TASK-3.2 [BE]:** Xây dựng API CRUD Khóa học (Courses) với các trạng thái Draft/Published/Archived và cơ chế tăng `version` khi sửa đổi khóa học đã xuất bản. *(Chưa bắt đầu)*
+- [ ] **TASK-3.3 [BE]:** Xây dựng API CRUD Chương (Sections) và Bài học (Lessons: Video/Text/Quiz). *(Chưa bắt đầu)*
+- [ ] **TASK-3.4 [BE]:** Xây dựng API CRUD Câu hỏi & Đáp án Quiz. *(Chưa bắt đầu)*
+- [ ] **TASK-3.5 [FE]:** Thiết kế trang Admin Dashboard: Giao diện quản lý danh sách khóa học, thêm/sửa chương bài học trực quan (drag-drop sắp xếp order_index nếu có thể). *(Chưa bắt đầu)*
+- [ ] **TASK-3.6 [FE]:** Giao diện Admin quản lý câu hỏi Quiz, thiết lập điểm chuẩn đạt và số lần làm tối đa. *(Chưa bắt đầu)*
+
+#### Phase 4: Thanh Toán VNPayQR & MoMo, Giữ Chỗ Mã Giảm Giá & Cron Job
+- [ ] **TASK-4.1 [BE]:** Xây dựng transaction atomic thực hiện kiểm tra mã giảm giá (Coupon), tăng `used_count` và tạo Enrollment trạng thái `pending` khi người dùng bấm mua. *(Chưa bắt đầu)*
+- [ ] **TASK-4.2 [BE]:** Tích hợp SDK/API VNPay & MoMo để tạo yêu cầu giao dịch (tính checksum hash HmacSHA512/SHA256) và sinh URL thanh toán (Pay URL/QR Code). *(Chưa bắt đầu)*
+- [ ] **TASK-4.3 [BE]:** Xây dựng endpoint tiếp nhận IPN (Instant Payment Notification) từ VNPay (`/payments/vnpay-ipn`) và MoMo (`/payments/momo-ipn`) để xác thực chữ ký bảo mật, kiểm tra số tiền, trạng thái giao dịch và kích hoạt enrollment/hoàn trả coupon. *(Chưa bắt đầu)*
+- [ ] **TASK-4.4 [BE]:** Viết Cron Job (chạy mỗi 5 phút) tự động quét và giải phóng các enrollment `pending` quá 15 phút không thanh toán (chuyển sang expired, hoàn lại lượt coupon). *(Chưa bắt đầu)*
+- [ ] **TASK-4.5 [FE]:** Xây dựng trang chi tiết khóa học, màn hình Checkout hỗ trợ lựa chọn phương thức thanh toán VNPayQR hoặc Ví MoMo, thực hiện redirect người dùng hoặc hiển thị QR Code để quét thanh toán. *(Chưa bắt đầu)*
+- [ ] **TASK-4.6 [FE]:** Xây dựng tính năng nhập coupon mã giảm giá, kiểm tra tính hợp lệ và hiển thị số tiền được giảm theo thời gian thực trước khi thanh toán. *(Chưa bắt đầu)*
+
+#### Phase 5: Trình Học Tập, Luồng Video & Chống Tua Gian Lận Tiến Độ
+- [ ] **TASK-5.1 [BE]:** Xây dựng API trả về Signed URL bảo mật cho video bài học từ Mux hoặc Cloudflare Stream để chống tải lậu. *(Chưa bắt đầu)*
+- [ ] **TASK-5.2 [BE]:** Xây dựng API cập nhật checkpoint thời gian xem video (`POST /lessons/{id}/progress`) được gọi định kỳ từ FE. *(Chưa bắt đầu)*
+- [ ] **TASK-5.3 [BE]:** Xây dựng API đánh dấu hoàn thành bài học (`POST /lessons/{id}/complete`) kèm cơ chế kiểm tra gian lận (đối với video: checkpoint >= 95% thời lượng; đối với bài viết: thời gian đọc tối thiểu dựa trên độ dài văn bản). *(Chưa bắt đầu)*
+- [ ] **TASK-5.4 [FE]:** Thiết kế giao diện Trình học tập (Learning Area) với sidebar bài học phân cấp, hiển thị tiến độ hoàn thành dưới dạng thanh progress bar. *(Chưa bắt đầu)*
+- [ ] **TASK-5.5 [FE]:** Tích hợp Video Player hỗ trợ tracking sự kiện xem video, định kỳ gửi checkpoint lên server mỗi 10 giây và ngăn chặn hành vi click hoàn thành sớm. *(Chưa bắt đầu)*
+- [ ] **TASK-5.6 [FE]:** Giao diện đọc bài viết (text lesson) tích hợp bộ đếm thời gian tối thiểu trước khi kích hoạt nút hoàn thành bài học. *(Chưa bắt đầu)*
+
+#### Phase 6: Làm Quiz Học Tập & Cấp Chứng Chỉ Độc Bản
+- [ ] **TASK-6.1 [BE]:** Xây dựng API bắt đầu làm Quiz (`/quizzes/{id}/start`) khởi tạo attempt lưu trạng thái `in_progress`. *(Chưa bắt đầu)*
+- [ ] **TASK-6.2 [BE]:** Xây dựng API chấm điểm Quiz tự động (`/quizzes/{id}/submit`), lưu lịch sử câu trả lời, cập nhật passed/failed và tự động hoàn thành bài học tương ứng nếu đạt. *(Chưa bắt đầu)*
+- [ ] **TASK-6.3 [BE]:** Xây dựng logic tự động kiểm tra tiến độ khóa học (100% complete) và phát hành Chứng chỉ (Certificate) chứa mã UUID độc bản xác thực kèm lưu trữ phiên bản khóa học. *(Chưa bắt đầu)*
+- [ ] **TASK-6.4 [FE]:** Xây dựng giao diện làm bài Quiz trắc nghiệm có bộ đếm thời gian ngược, hiển thị kết quả chi tiết từng câu hỏi sau khi nộp bài. *(Chưa bắt đầu)*
+- [ ] **TASK-6.5 [FE]:** Xây dựng trang xem, hiển thị và tải chứng chỉ học tập PDF đẹp mắt, tích hợp trang xác minh chứng chỉ công khai cho nhà tuyển dụng qua mã UUID. *(Chưa bắt đầu)*
+
+#### Phase 7: Đánh Giá, Hoàn Tiền & Admin Báo Cáo
+- [ ] **TASK-7.1 [BE/FE]:** Phát triển tính năng đánh giá khóa học (1-5 sao kèm nhận xét), ràng buộc chỉ học viên đã mua khóa học mới được đánh giá, mỗi người chỉ được đánh giá 1 lần. *(Chưa bắt đầu)*
+- [ ] **TASK-7.2 [BE]:** Phát triển luồng hoàn tiền (Refund) từ Admin: gọi API Hoàn tiền VNPay/MoMo tương ứng, chuyển trạng thái enrollment thành `revoked`, vô hiệu hóa chứng chỉ đã cấp. *(Chưa bắt đầu)*
+- [ ] **TASK-7.3 [BE/FE]:** Phát triển trang Dashboard báo cáo thống kê cho Admin: doanh thu theo thời gian, tỷ lệ đăng ký học viên, tỷ lệ hoàn thành các khóa học. *(Chưa bắt đầu)*
+- [ ] **TASK-7.4 [DevOps]:** Tối ưu hóa Database Indexes trên Postgres để tăng tốc truy vấn tiến độ học tập và lịch sử thanh toán. *(Chưa bắt đầu)*
+- [ ] **TASK-7.5 [Testing]:** Viết kiểm thử tích hợp (End-to-End Testing) cho toàn bộ luồng nghiệp vụ mua khóa học -> học -> làm quiz -> nhận chứng chỉ. *(Chưa bắt đầu)*
+
