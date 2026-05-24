@@ -8,8 +8,9 @@ const { initEmailTransporter } = require('./lib/email');
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
-const courseRoutes = require('./routes/courseRoutes'); // Thêm dòng này (1)
+const courseRoutes = require('./routes/courseRoutes'); 
 const adminRoutes = require('./routes/adminRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -30,8 +31,9 @@ app.get('/api/health', (req, res) => {
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/courses', courseRoutes); // Thêm dòng này (2)
+app.use('/api/courses', courseRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/categories', categoryRoutes);
 
 // Khởi động server
 app.listen(PORT, async () => {
