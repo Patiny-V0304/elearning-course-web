@@ -13,6 +13,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const courseContentRoutes = require('./routes/courseContentRoutes');
 const videoRoutes = require('./routes/videoRoutes');
+const learningRoutes = require('./routes/learningRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -38,6 +39,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/content', courseContentRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/learning', learningRoutes);
+
 
 
 // Khởi động server
