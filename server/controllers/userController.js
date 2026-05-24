@@ -1,33 +1,16 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const prisma = require('../lib/prisma');
 
-// Lấy danh sách tất cả Users
-const getAllUsers = async (req, res) => {
-  try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        role: true,
-        avatarUrl: true,
-        isActive: true,
-        createdAt: true,
-      },
-    });
-    res.status(200).json(users);
-  } catch (error) {
-    console.error('Lỗi khi lấy danh sách users:', error);
-    res.status(500).json({ error: 'Lỗi server khi lấy danh sách users' });
-  }
-};
+const SALT_ROUNDS = 12;
 
-// Lấy thông tin User theo ID
-const getUserById = async (req, res) => {
-  const { id } = req.params;
+// ============================================
+// GET /users/me — Lấy thông tin user đang đăng nhập
+// ============================================
+const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: req.user.id },
       select: {
         id: true,
         email: true,
@@ -35,6 +18,7 @@ const getUserById = async (req, res) => {
         role: true,
         avatarUrl: true,
         bio: true,
+        emailVerifiedAt: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
@@ -48,61 +32,60 @@ const getUserById = async (req, res) => {
     res.status(200).json(user);
   } catch (error) {
     console.error('Lỗi khi lấy thông tin user:', error);
-    res.status(500).json({ error: 'Lỗi server khi lấy thông tin user' });
+    res.status(500).json({ error: 'Lỗi server' });
   }
 };
 
-// Tạo User mới
-const createUser = async (req, res) => {
-  const { email, username, passwordHash } = req.body;
-
-  // Validate input
-  if (!email || !username || !passwordHash) {
-    return res.status(400).json({
-      error: 'Thiếu thông tin bắt buộc: email, username, passwordHash',
-    });
-  }
+// ============================================
+// PUT /users/me — Cập nhật profile của user đang đăng nhập
+// ============================================
+const updateMe = async (req, res) => {
+  const { username, avatarUrl, bio, currentPassword, newPassword } = req.body;
 
   try {
-    const newUser = await prisma.user.create({
-      data: { email, username, passwordHash },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        role: true,
-        createdAt: true,
-      },
-    });
-    res.status(201).json(newUser);
-  } catch (error) {
-    console.error('Lỗi khi tạo user:', error);
+    const updateData = {};
 
-    // Xử lý lỗi unique constraint (email hoặc username đã tồn tại)
-    if (error.code === 'P2002') {
-      return res.status(409).json({
-        error: 'Email hoặc username đã tồn tại',
+    // Cập nhật thông tin cơ bản
+    if (username !== undefined) updateData.username = username;
+    if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+    if (bio !== undefined) updateData.bio = bio;
+
+    // Đổi mật khẩu (nếu có)
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          error: 'Phải nhập mật khẩu hiện tại để đổi mật khẩu',
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({
+          error: 'Mật khẩu mới phải có ít nhất 6 ký tự',
+        });
+      }
+
+      // Lấy password hash hiện tại
+      const currentUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { passwordHash: true },
       });
+
+      const isValid = await bcrypt.compare(currentPassword, currentUser.passwordHash);
+      if (!isValid) {
+        return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng' });
+      }
+
+      updateData.passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
     }
 
-    res.status(400).json({ error: 'Dữ liệu không hợp lệ' });
-  }
-};
+    // Kiểm tra có gì để update không
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'Không có dữ liệu để cập nhật' });
+    }
 
-// Cập nhật thông tin User
-const updateUser = async (req, res) => {
-  const { id } = req.params;
-  const { email, username, avatarUrl, bio } = req.body;
-
-  try {
     const updatedUser = await prisma.user.update({
-      where: { id: parseInt(id) },
-      data: {
-        ...(email && { email }),
-        ...(username && { username }),
-        ...(avatarUrl !== undefined && { avatarUrl }),
-        ...(bio !== undefined && { bio }),
-      },
+      where: { id: req.user.id },
+      data: updateData,
       select: {
         id: true,
         email: true,
@@ -113,54 +96,139 @@ const updateUser = async (req, res) => {
         updatedAt: true,
       },
     });
-    res.status(200).json(updatedUser);
+
+    res.status(200).json({
+      message: 'Cập nhật thành công',
+      user: updatedUser,
+    });
   } catch (error) {
     console.error('Lỗi khi cập nhật user:', error);
 
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'Không tìm thấy user' });
-    }
     if (error.code === 'P2002') {
-      return res.status(409).json({
-        error: 'Email hoặc username đã tồn tại',
-      });
+      return res.status(409).json({ error: 'Username đã tồn tại' });
     }
 
-    res.status(400).json({ error: 'Dữ liệu không hợp lệ' });
+    res.status(500).json({ error: 'Lỗi server' });
   }
 };
 
-// Xoá mềm User (soft delete)
-const deleteUser = async (req, res) => {
-  const { id } = req.params;
-
+// ============================================
+// GET /admin/users — Lấy danh sách users (Admin)
+// ============================================
+const adminGetAllUsers = async (req, res) => {
   try {
-    const deletedUser = await prisma.user.update({
-      where: { id: parseInt(id) },
-      data: { deletedAt: new Date() },
-      select: { id: true, email: true, deletedAt: true },
-    });
+    const { page = 1, limit = 20, search, role, isActive } = req.query;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    // Build filter
+    const where = {
+      deletedAt: null,
+    };
+
+    if (search) {
+      where.OR = [
+        { email: { contains: search, mode: 'insensitive' } },
+        { username: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (role) {
+      where.role = role;
+    }
+
+    if (isActive !== undefined) {
+      where.isActive = isActive === 'true';
+    }
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          avatarUrl: true,
+          isActive: true,
+          emailVerifiedAt: true,
+          createdAt: true,
+        },
+      }),
+      prisma.user.count({ where }),
+    ]);
+
     res.status(200).json({
-      message: 'User đã được xoá mềm',
-      user: deletedUser,
+      users,
+      pagination: {
+        page: parseInt(page),
+        limit: take,
+        total,
+        totalPages: Math.ceil(total / take),
+      },
     });
   } catch (error) {
-    console.error('Lỗi khi xoá user:', error);
+    console.error('Lỗi khi lấy danh sách users:', error);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+};
+
+// ============================================
+// PUT /admin/users/:id/status — Khóa/Mở khóa user (Admin)
+// ============================================
+const adminUpdateUserStatus = async (req, res) => {
+  const { id } = req.params;
+  const { isActive } = req.body;
+
+  if (typeof isActive !== 'boolean') {
+    return res.status(400).json({
+      error: 'Trường isActive phải là boolean (true/false)',
+    });
+  }
+
+  // Không cho admin tự khóa chính mình
+  if (parseInt(id) === req.user.id) {
+    return res.status(400).json({
+      error: 'Không thể thay đổi trạng thái tài khoản của chính mình',
+    });
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: { isActive },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        isActive: true,
+      },
+    });
+
+    res.status(200).json({
+      message: isActive ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản',
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error('Lỗi khi cập nhật trạng thái user:', error);
 
     if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Không tìm thấy user' });
     }
 
-    res.status(500).json({ error: 'Lỗi server khi xoá user' });
+    res.status(500).json({ error: 'Lỗi server' });
   }
 };
 
 module.exports = {
-  getAllUsers,
-  getUserById,
-  createUser,
-  updateUser,
-  deleteUser,
+  getMe,
+  updateMe,
+  adminGetAllUsers,
+  adminUpdateUserStatus,
 };
 
 // Đăng nhập và nhận Token
