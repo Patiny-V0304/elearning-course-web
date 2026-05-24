@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: lms_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data:Z
+
+  server:
+    build: ./server
+    container_name: lms_server
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./server/.env
+    depends_on:
+      - db
+    # Lệnh này đảm bảo Prisma gen type và push db trước khi chạy server
+    command: sh -c "npx prisma generate && npx prisma db push && node server.js"
+volumes:
+  pgdata:
