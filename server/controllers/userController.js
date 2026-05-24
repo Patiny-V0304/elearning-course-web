@@ -1,3 +1,4 @@
+const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const prisma = require('../lib/prisma');
 
@@ -228,4 +229,52 @@ module.exports = {
   updateMe,
   adminGetAllUsers,
   adminUpdateUserStatus,
+};
+
+// Đăng nhập và nhận Token
+const loginUser = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // 1. Tìm user theo email
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy tài khoản với email này.' });
+    }
+
+    // 2. Kiểm tra mật khẩu 
+    // (Lưu ý: Vì API createUser của bạn đang nhận thẳng passwordHash từ body, 
+    // nên ở đây mình tạm so sánh chuỗi trực tiếp. Trong thực tế bạn nên dùng bcrypt để mã hoá nhé).
+    if (password !== user.passwordHash) {
+      return res.status(401).json({ error: 'Sai mật khẩu.' });
+    }
+
+    // 3. Tạo Token (Kẹp thông tin id, email và role vào token)
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role }, // Payload
+      process.env.JWT_SECRET || 'super_secret_key_elearning', // Secret Key
+      { expiresIn: '1d' } // Hết hạn sau 1 ngày
+    );
+
+    // 4. Trả về token cho client
+    res.status(200).json({
+      message: 'Đăng nhập thành công',
+      token: token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Lỗi đăng nhập:', error);
+    res.status(500).json({ error: 'Lỗi server khi đăng nhập.' });
+  }
+};
+
+// Đừng quên export nó ở cuối file nhé:
+module.exports = {
+  getAllUsers, getUserById, createUser, updateUser, deleteUser,
+  loginUser // Thêm cái này
 };

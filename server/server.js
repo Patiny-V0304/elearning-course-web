@@ -8,6 +8,7 @@ const { initEmailTransporter } = require('./lib/email');
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const courseRoutes = require('./routes/courseRoutes'); // Thêm dòng này (1)
 const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
@@ -29,15 +30,16 @@ app.get('/api/health', (req, res) => {
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/courses', courseRoutes); // Thêm dòng này (2)
 app.use('/api/admin', adminRoutes);
 
 // Khởi động server
 app.listen(PORT, async () => {
   console.log(`Backend REST API đang chạy tại http://localhost:${PORT}`);
+});
   try {
     await initEmailTransporter();
   } catch (error) {
     console.error('Lỗi khi khởi tạo email service:', error);
-  }
-});
+  };
 
